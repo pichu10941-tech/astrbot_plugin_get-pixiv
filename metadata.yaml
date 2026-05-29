@@ -1,4 +1,4 @@
-name: astrbot_plugin_get-pixiv
+name: astrbot_plugin_get_pixiv
 display_name: Pixiv 图片发送修复
 desc: 修复 NapCat/LLOB 发送 Pixiv 图片时因防盗链导致的 rich media transfer failed / 下载文件失败 Forbidden 错误，通过将 i.pximg.net URL 替换为反代域名 i.pixiv.re 绕过防盗链限制。
 short_desc: 修复 Pixiv 图片发送 Forbidden 错误
