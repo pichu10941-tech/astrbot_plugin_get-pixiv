@@ -63,6 +63,9 @@ class ImageSendFix(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         self._patched_platforms: list = []
+        asyncio.get_event_loop().call_soon(
+            lambda: asyncio.ensure_future(self._patch_platforms())
+        )
 
     async def _patch_platforms(self) -> None:
         from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import AiocqhttpAdapter
@@ -88,7 +91,6 @@ class ImageSendFix(Star):
 
     @filter.on_decorating_result()
     async def _ensure_patched(self, event: AstrMessageEvent):
-        """首次消息时确保 patch 已注入（平台实例在插件初始化后才完全就绪）"""
         if not self._patched_platforms:
             await self._patch_platforms()
 
