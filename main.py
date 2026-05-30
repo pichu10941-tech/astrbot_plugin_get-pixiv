@@ -237,50 +237,6 @@ class PixivPlugin(Star):
 
         yield event.image_result(file_path)
 
-    @filter.llm_tool(name="search_booru_image")
-    async def search_booru_image(self, event: AstrMessageEvent, tags: str):
-        """仅当用户明确提到 danbooru 或 booru 时使用。按标签从 danbooru.donmai.us 搜索图片并发送。不要在用户只说"找图"或"发涩图"时调用此工具，那些请求应使用其他搜索方式。插件会自动下载图片并发送，无需再调用 send_message_to_user。
-
-        Args:
-            tags(string): danbooru 搜索标签，空格分隔，如 "1girl blue_eyes" 或 "rating:sensitive 1girl"
-        """
-        import random
-
-        def _sync_search() -> str:
-            page = random.randint(1, 30)
-            resp = cffi_requests.get(
-                "https://danbooru.donmai.us/posts.json",
-                params={"tags": tags, "limit": "1", "page": str(page)},
-                impersonate="chrome",
-                headers={"Accept": "application/json"},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                raise ValueError(f"danbooru 搜索返回 HTTP {resp.status_code}")
-            posts = resp.json()
-            if not posts:
-                raise ValueError(f"danbooru 未找到匹配 '{tags}' 的图片")
-            post = posts[0]
-            url = post.get("file_url") or post.get("large_file_url")
-            if not url:
-                raise ValueError(f"danbooru post {post.get('id')} 无可用图片 URL")
-            return url
-
-        try:
-            img_url = await asyncio.to_thread(_sync_search)
-        except Exception as e:
-            logger.warning(f"[booru] danbooru 搜索失败: {e}")
-            yield event.plain_result(f"danbooru 搜索失败: {e}")
-            return
-
-        logger.info(f"[booru] 搜索 '{tags}' 命中，开始下载: {img_url}")
-        file_path = await self._cffi_download_to_file(img_url)
-        if not file_path:
-            yield event.plain_result("下载 danbooru 图片失败")
-            return
-
-        yield event.image_result(file_path)
-
     async def _resolve_and_download(self, url: str) -> Optional[str]:
         """
         将 pixiv/danbooru 相关 URL 解析为可下载地址，下载后返回临时文件路径。
