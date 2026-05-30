@@ -287,20 +287,28 @@ class PixivPlugin(Star):
         Pixiv: 统一使用 pixiv.re/{id}.png 格式下载。
         Danbooru: 使用 curl_cffi 直接下载 CDN 链接。
         """
-        # Danbooru CDN 直链
-        if "cdn.donmai.us/" in url or "danbooru.donmai.us/original" in url:
+        if "cdn.donmai.us/" in url:
             return await self._cffi_download_to_file(url)
 
-        # Danbooru post 页面 URL → 提取 ID 后走 API 获取图片直链
-        danbooru_match = re.search(r"danbooru\.donmai\.us/posts/(\d+)", url)
-        if danbooru_match:
-            post_id = danbooru_match.group(1)
-            try:
-                img_url = await self._fetch_danbooru_url(post_id)
-                return await self._cffi_download_to_file(img_url)
-            except Exception as e:
-                logger.warning(f"[booru] 兜底下载 danbooru {post_id} 失败: {e}")
-                return None
+        if "danbooru.donmai.us/" in url:
+            post_match = re.search(r"(?:posts/|post/show/)(\d+)", url)
+            if post_match:
+                try:
+                    img_url = await self._fetch_danbooru_url(post_match.group(1))
+                    return await self._cffi_download_to_file(img_url)
+                except Exception as e:
+                    logger.warning(f"[booru] 兜底下载 danbooru {post_match.group(1)} 失败: {e}")
+                    return None
+            # LLM 可能编造了假直链（如 /originals/xx/xx/id.jpg），尝试提取数字 ID
+            id_match = re.search(r"/(\d{6,})", url)
+            if id_match:
+                try:
+                    img_url = await self._fetch_danbooru_url(id_match.group(1))
+                    return await self._cffi_download_to_file(img_url)
+                except Exception as e:
+                    logger.warning(f"[booru] 兜底下载 danbooru (猜测ID {id_match.group(1)}) 失败: {e}")
+                    return None
+            return await self._cffi_download_to_file(url)
 
         m = _ARTWORK_URL_RE.search(url)
         if m:
