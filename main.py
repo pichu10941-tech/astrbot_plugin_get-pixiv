@@ -27,7 +27,6 @@ import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
-from astrbot.api.star import AstrBotConfig
 
 _PIXIV_IMG_HOST = "i.pximg.net"
 _PIXIV_PROXY_HOST = "i.pixiv.re"
@@ -74,7 +73,7 @@ class PixivPlugin(Star):
     提供 get_pixiv_image、get_booru_image LLM 工具，并自动修复 i.pximg.net 防盗链问题。
     """
 
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context, config=None):
         super().__init__(context)
         self._config = config
         self._patched_platforms: list = []
