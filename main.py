@@ -25,6 +25,7 @@ import uuid
 from typing import Optional
 
 import aiohttp
+from curl_cffi import requests as cffi_requests
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
@@ -117,29 +118,75 @@ class PixivPlugin(Star):
             logger.warning(f"[pixiv] 下载异常: {url} — {e}")
             return None
 
+    async def _cffi_download_to_file(self, url: str) -> Optional[str]:
+        """
+        使用 curl_cffi 下载文件（绕过 Cloudflare），适用于 Danbooru CDN。
+        同步调用通过 asyncio.to_thread 包装为异步。
+        """
+        os.makedirs(_TEMP_DIR, exist_ok=True)
+
+        def _sync_download() -> Optional[str]:
+            try:
+                resp = cffi_requests.get(
+                    url,
+                    impersonate="chrome",
+                    timeout=_DOWNLOAD_TIMEOUT,
+                    allow_redirects=True,
+                )
+                if resp.status_code != 200:
+                    logger.warning(f"[booru] cffi 下载失败 HTTP {resp.status_code}: {url}")
+                    return None
+                data = resp.content
+                ct = resp.headers.get("content-type", "")
+                ext = ".jpg"
+                if "png" in ct:
+                    ext = ".png"
+                elif "gif" in ct:
+                    ext = ".gif"
+                elif "webp" in ct:
+                    ext = ".webp"
+                elif "mp4" in ct:
+                    ext = ".mp4"
+                file_path = os.path.join(_TEMP_DIR, f"{uuid.uuid4().hex}{ext}")
+                with open(file_path, "wb") as f:
+                    f.write(data)
+                return os.path.abspath(file_path)
+            except Exception as e:
+                logger.warning(f"[booru] cffi 下载异常: {url} — {e}")
+                return None
+
+        return await asyncio.to_thread(_sync_download)
+
     async def _fetch_danbooru_url(self, post_id: str) -> str:
         """
         通过 danbooru JSON API 获取 post 的图片直链。
-        需要用户提供 login + api_key（danbooru 有 Cloudflare 保护）。
+        使用 curl_cffi impersonate 绕过 Cloudflare，API key 可选。
         """
         login = self._config.get("danbooru_login", "") if self._config else ""
         api_key = self._config.get("danbooru_api_key", "") if self._config else ""
-        if not login or not api_key:
-            raise ValueError("请在插件配置中填写 danbooru_login 和 danbooru_api_key")
-        session = self._get_session()
-        async with session.get(
-            f"https://danbooru.donmai.us/posts/{post_id}.json",
-            params={"login": login, "api_key": api_key},
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                raise ValueError(f"danbooru API 返回 HTTP {resp.status}")
-            data = await resp.json()
-        url = data.get("file_url") or data.get("large_file_url")
-        if not url:
-            raise ValueError(f"danbooru post {post_id} 无可用图片 URL")
-        return url
+
+        def _sync_fetch() -> str:
+            params: dict = {}
+            auth = None
+            if login and api_key:
+                auth = (login, api_key)
+            resp = cffi_requests.get(
+                f"https://danbooru.donmai.us/posts/{post_id}.json",
+                params=params,
+                auth=auth,
+                impersonate="chrome",
+                headers={"Accept": "application/json"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                raise ValueError(f"danbooru API 返回 HTTP {resp.status_code}")
+            data = resp.json()
+            url = data.get("file_url") or data.get("large_file_url")
+            if not url:
+                raise ValueError(f"danbooru post {post_id} 无可用图片 URL")
+            return url
+
+        return await asyncio.to_thread(_sync_fetch)
 
     @filter.llm_tool(name="get_pixiv_image")
     async def get_pixiv_image(self, event: AstrMessageEvent, artwork_id_or_url: str):
@@ -183,7 +230,7 @@ class PixivPlugin(Star):
             return
 
         logger.info(f"[booru] 开始下载 danbooru {post_id}: {img_url}")
-        file_path = await self._download_to_file(img_url)
+        file_path = await self._cffi_download_to_file(img_url)
         if not file_path:
             yield event.plain_result(f"下载 danbooru post {post_id} 图片失败")
             return
