@@ -57,8 +57,8 @@ def _extract_danbooru_id(s: str) -> Optional[str]:
     return (m.group(1) or m.group(2)) if m else None
 
 
-def _pixiv_re_url(artwork_id: str, page: int = 1) -> str:
-    return f"https://pixiv.re/{artwork_id}-{page}.png"
+def _pixiv_re_url(artwork_id: str) -> str:
+    return f"https://pixiv.re/{artwork_id}.png"
 
 
 class PixivPlugin(Star):
@@ -139,7 +139,7 @@ class PixivPlugin(Star):
             yield event.plain_result(f"无法解析 artwork ID: {artwork_id_or_url}")
             return
 
-        url = _pixiv_re_url(artwork_id, 1)
+        url = _pixiv_re_url(artwork_id)
         logger.info(f"[pixiv] 开始下载作品 {artwork_id}: {url}")
 
         b64 = await self._download_as_base64(url)
@@ -184,7 +184,7 @@ class PixivPlugin(Star):
         """
         m = _ARTWORK_URL_RE.search(url)
         if m:
-            download_url = _pixiv_re_url(m.group(1), 1)
+            download_url = _pixiv_re_url(m.group(1))
             return await self._download_as_base64(download_url)
 
         if _PIXIV_IMG_HOST in url:
@@ -195,7 +195,7 @@ class PixivPlugin(Star):
             # i.pixiv.re 404（日期路径错误），从 URL 提取 artwork ID 用 pixiv.re 重试
             id_match = re.search(r"/(\d+)_p\d+", url)
             if id_match:
-                fallback_url = _pixiv_re_url(id_match.group(1), 1)
+                fallback_url = _pixiv_re_url(id_match.group(1))
                 logger.info(f"[pixiv] i.pixiv.re 失败，尝试 pixiv.re 回退: {fallback_url}")
                 return await self._download_as_base64(fallback_url)
             return None
