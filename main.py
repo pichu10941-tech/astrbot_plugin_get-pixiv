@@ -119,7 +119,7 @@ class PixivPlugin(Star):
 
     @filter.llm_tool(name="get_pixiv_image")
     async def get_pixiv_image(self, event: AstrMessageEvent, artwork_id_or_url: str):
-        """获取 Pixiv 作品的图片 URL，供后续发送给用户。使用 pixiv.re 反代，无需代理即可下载。
+        """获取 Pixiv 作品的图片 URL，供后续发送给用户。使用 pixiv.re 反代，无需代理即可下载。返回可直接用于发送图片的 URL。
 
         Args:
             artwork_id_or_url(string): Pixiv 作品 ID（如 127565524）或作品页 URL（如 https://www.pixiv.net/artworks/127565524）
@@ -130,7 +130,7 @@ class PixivPlugin(Star):
             return
         url = _pixiv_re_url(artwork_id, 1)
         logger.info(f"[pixiv] 作品 {artwork_id}: {url}")
-        yield event.plain_result(url)
+        yield event.plain_result(f"图片直链: {url}\n请使用 send_message_to_user 工具发送此图片，type 为 image，url 为上述链接。")
 
     @filter.llm_tool(name="get_booru_image")
     async def get_booru_image(self, event: AstrMessageEvent, post_id_or_url: str):
