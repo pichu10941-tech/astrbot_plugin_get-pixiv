@@ -212,7 +212,7 @@ class PixivPlugin(Star):
 
     @filter.llm_tool(name="get_booru_image")
     async def get_booru_image(self, event: AstrMessageEvent, post_id_or_url: str):
-        """获取并发送 danbooru 图片。插件会自动下载图片并发送，无需再调用 send_message_to_user。
+        """仅当用户提供了具体的 danbooru post ID 或 danbooru URL 时使用。插件会自动下载图片并发送，无需再调用 send_message_to_user。
 
         Args:
             post_id_or_url(string): danbooru post ID（如 8988430）或页面 URL（如 https://danbooru.donmai.us/posts/8988430）
@@ -239,7 +239,7 @@ class PixivPlugin(Star):
 
     @filter.llm_tool(name="search_booru_image")
     async def search_booru_image(self, event: AstrMessageEvent, tags: str):
-        """按标签从 danbooru 搜索图片并发送。适用于用户想要某类图片但没有具体 post ID 的场景。插件会自动下载图片并发送，无需再调用 send_message_to_user。
+        """仅当用户明确提到 danbooru 或 booru 时使用。按标签从 danbooru.donmai.us 搜索图片并发送。不要在用户只说"找图"或"发涩图"时调用此工具，那些请求应使用其他搜索方式。插件会自动下载图片并发送，无需再调用 send_message_to_user。
 
         Args:
             tags(string): danbooru 搜索标签，空格分隔，如 "1girl blue_eyes" 或 "rating:sensitive 1girl"
