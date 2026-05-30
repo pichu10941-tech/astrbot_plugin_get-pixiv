@@ -10,17 +10,5 @@
     "description": "danbooru.donmai.us 的 API Key，在个人设置页面生成",
     "type": "string",
     "default": ""
-  },
-  "gelbooru_user_id": {
-    "label": "Gelbooru User ID",
-    "description": "gelbooru.com 的用户 ID，在个人设置页面查看",
-    "type": "string",
-    "default": ""
-  },
-  "gelbooru_api_key": {
-    "label": "Gelbooru API Key",
-    "description": "gelbooru.com 的 API Key，在个人设置页面生成",
-    "type": "string",
-    "default": ""
   }
 }
