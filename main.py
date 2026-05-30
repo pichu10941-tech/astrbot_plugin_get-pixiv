@@ -3,24 +3,25 @@ Pixiv / Danbooru 图片获取与发送插件
 
 核心方案：
   NapCat 无法下载 pixiv.re / i.pximg.net 等域名的图片（被墙或防盗链）。
-  因此由 AstrBot 侧下载图片，转为 base64，再通过 NapCat 发送。
-  NapCat 收到 base64 数据后直接发送，无需自行下载任何外部 URL。
+  因此由 AstrBot 侧下载图片保存为临时文件，再通过本地文件路径发送。
+  NapCat 读取本地文件直接发送，无需自行访问任何外部 URL。
 
 功能一：get_pixiv_image LLM 工具
   LLM 通过 artwork ID 或 URL 获取 Pixiv 图片，插件从 pixiv.re 下载后
-  直接以 base64 图片发送给用户，不返回 URL。
+  直接以本地图片发送给用户，不返回 URL。
 
 功能二：get_booru_image LLM 工具
   LLM 通过 post ID 从 danbooru 获取图片并直接发送。
 
 功能三：兜底 patch
   拦截消息链中的 i.pximg.net / pixiv.net/artworks/ URL，
-  由 AstrBot 下载转 base64 后替换，确保 NapCat 能发送。
+  由 AstrBot 下载为临时文件后替换，确保 NapCat 能发送。
 """
 
 import asyncio
-import base64
+import os
 import re
+import uuid
 from typing import Optional
 
 import aiohttp
@@ -33,6 +34,7 @@ from astrbot.api.star import Context, Star
 _PIXIV_IMG_HOST = "i.pximg.net"
 _PIXIV_PROXY_HOST = "i.pixiv.re"
 _DOWNLOAD_TIMEOUT = 30
+_TEMP_DIR = os.path.join("data", "pixiv_cache")
 
 _DOWNLOAD_HEADERS = {
     "User-Agent": (
@@ -81,11 +83,12 @@ class PixivPlugin(Star):
             self._http_session = aiohttp.ClientSession()
         return self._http_session
 
-    async def _download_as_base64(self, url: str) -> Optional[str]:
+    async def _download_to_file(self, url: str) -> Optional[str]:
         """
-        下载图片并返回纯 base64 字符串（不含 base64:// 前缀）。
+        下载图片并保存为临时文件，返回文件绝对路径。
         失败返回 None。
         """
+        os.makedirs(_TEMP_DIR, exist_ok=True)
         session = self._get_session()
         try:
             async with session.get(
@@ -98,7 +101,18 @@ class PixivPlugin(Star):
                     logger.warning(f"[pixiv] 下载失败 HTTP {resp.status}: {url}")
                     return None
                 data = await resp.read()
-                return base64.b64encode(data).decode()
+                ext = ".jpg"
+                ct = resp.content_type or ""
+                if "png" in ct:
+                    ext = ".png"
+                elif "gif" in ct:
+                    ext = ".gif"
+                elif "webp" in ct:
+                    ext = ".webp"
+                file_path = os.path.join(_TEMP_DIR, f"{uuid.uuid4().hex}{ext}")
+                with open(file_path, "wb") as f:
+                    f.write(data)
+                return os.path.abspath(file_path)
         except Exception as e:
             logger.warning(f"[pixiv] 下载异常: {url} — {e}")
             return None
@@ -142,12 +156,12 @@ class PixivPlugin(Star):
         url = _pixiv_re_url(artwork_id)
         logger.info(f"[pixiv] 开始下载作品 {artwork_id}: {url}")
 
-        b64 = await self._download_as_base64(url)
-        if not b64:
+        file_path = await self._download_to_file(url)
+        if not file_path:
             yield event.plain_result(f"下载 Pixiv 作品 {artwork_id} 失败，请稍后重试")
             return
 
-        yield event.image_result(f"base64://{b64}")
+        yield event.image_result(file_path)
 
     @filter.llm_tool(name="get_booru_image")
     async def get_booru_image(self, event: AstrMessageEvent, post_id_or_url: str):
@@ -169,28 +183,28 @@ class PixivPlugin(Star):
             return
 
         logger.info(f"[booru] 开始下载 danbooru {post_id}: {img_url}")
-        b64 = await self._download_as_base64(img_url)
-        if not b64:
+        file_path = await self._download_to_file(img_url)
+        if not file_path:
             yield event.plain_result(f"下载 danbooru post {post_id} 图片失败")
             return
 
-        yield event.image_result(f"base64://{b64}")
+        yield event.image_result(file_path)
 
     async def _resolve_and_download(self, url: str) -> Optional[str]:
         """
-        将 pixiv 相关 URL 解析为可下载地址，下载后返回 base64。
+        将 pixiv 相关 URL 解析为可下载地址，下载后返回临时文件路径。
         统一使用 pixiv.re/{id}.png 格式下载，避免 LLM 编造的日期路径导致 404。
         """
         m = _ARTWORK_URL_RE.search(url)
         if m:
-            return await self._download_as_base64(_pixiv_re_url(m.group(1)))
+            return await self._download_to_file(_pixiv_re_url(m.group(1)))
 
         if _PIXIV_IMG_HOST in url:
             id_match = re.search(r"/(\d+)_p\d+", url)
             if id_match:
-                return await self._download_as_base64(_pixiv_re_url(id_match.group(1)))
+                return await self._download_to_file(_pixiv_re_url(id_match.group(1)))
             proxy_url = url.replace(_PIXIV_IMG_HOST, _PIXIV_PROXY_HOST, 1)
-            return await self._download_as_base64(proxy_url)
+            return await self._download_to_file(proxy_url)
 
         return None
 
@@ -212,10 +226,10 @@ class PixivPlugin(Star):
         results = await asyncio.gather(
             *[self._resolve_and_download(src) for _, src in pending]
         )
-        for (i, original), b64 in zip(pending, results):
-            if b64:
-                chain[i] = Comp.Image.fromBase64(b64)
-                logger.info(f"[pixiv] 已下载并转 base64: {original[:60]}...")
+        for (i, original), file_path in zip(pending, results):
+            if file_path:
+                chain[i] = Comp.Image.fromFileSystem(file_path)
+                logger.info(f"[pixiv] 已下载为本地文件: {original[:60]}...")
             else:
                 logger.warning(f"[pixiv] 下载失败，保留原始 URL: {original}")
 
