@@ -6,9 +6,9 @@
 
 ### 1. `get_pixiv_image` LLM 工具
 
-LLM 可通过作品 ID 或 `pixiv.net/artworks/xxx` URL 直接获取图片直链，无需用户手动找图。使用 Pixiv Ajax API，**无需登录**，支持多页作品（返回全部分页直链）。
+LLM 可通过作品 ID 或 `pixiv.net/artworks/xxx` URL 获取图片。直接使用 `pixiv.re` 反代构造 URL，**无需调用 Pixiv API，无需代理**。
 
-R-18 作品的 `/pages` 端点在未登录状态下返回 404，插件会自动从 `/illust` 的缩略图 URL 推导原图路径作为兜底。
+多页作品通过 `page_count` 参数指定页数。
 
 ### 2. `get_booru_image` LLM 工具
 
@@ -16,17 +16,12 @@ LLM 可从 danbooru 获取图片直链。需要在插件配置中填写 `danboor
 
 ### 3. i.pximg.net 反代修复（兜底）
 
-NapCat/LLOB 发送 Pixiv 图片时，协议端自行下载 `i.pximg.net` 的图片，因缺少 `Referer` 头被 403，导致：
-
-```
-retcode=1200, message='rich media transfer failed'
-retcode=1200, message='下载文件失败: Forbidden'
-```
+NapCat/LLOB 发送 Pixiv 图片时，协议端自行下载 `i.pximg.net` 的图片，因缺少 `Referer` 头被 403。
 
 插件在底层 patch `send_by_session`，在消息发出前自动处理：
 
-- `pixiv.net/artworks/xxx` 作品页 URL → 自动调 Pixiv API 解析为图片直链
-- `i.pximg.net` 直链 → 替换为反代域名 `i.pixiv.re`
+- `pixiv.net/artworks/xxx` 作品页 URL → 替换为 `pixiv.re` 反代 URL
+- `i.pximg.net` 直链 → 替换为 `i.pixiv.re` 反代
 
 覆盖所有发送路径（handler yield + LLM tool），**即使 LLM 没有调用 `get_pixiv_image` 工具，直接把作品页 URL 发出去也能正常显示**。
 
@@ -47,11 +42,13 @@ git clone https://github.com/pichu10941-tech/astrbot_plugin_get-pixiv
 | `danbooru_login` | danbooru.donmai.us 用户名 |
 | `danbooru_api_key` | danbooru API Key（个人设置页面生成） |
 
+Pixiv 功能无需任何配置，开箱即用。
+
 ## 使用示例
 
 > 帮我发一张 pixiv.net/artworks/127565524 的图
 
-> 把 pixiv 作品 128290291 发给我（R-18 作品也支持）
+> 把 pixiv 作品 128290291 发给我
 
 > 从 danbooru post 8988430 发一张图
 
