@@ -1,29 +1,31 @@
 # astrbot_plugin_get_pixiv
 
-为 AstrBot 提供 Pixiv / Danbooru 图片获取能力，并修复 NapCat/LLOB 发送 Pixiv 图片时的防盗链错误。
+为 AstrBot 提供 Pixiv / Danbooru 图片获取能力，解决 NapCat/LLOB 无法发送外部图片的问题。
+
+## 原理
+
+NapCat 无法下载 `pixiv.re`、`i.pximg.net`、`danbooru.donmai.us` 等域名的图片（被墙或防盗链），导致 `rich media transfer failed`。
+
+本插件由 **AstrBot 侧下载图片并转为 base64**，NapCat 收到 base64 数据后直接发送，无需自行访问任何外部 URL。
 
 ## 功能
 
 ### 1. `get_pixiv_image` LLM 工具
 
-LLM 可通过作品 ID 或 `pixiv.net/artworks/xxx` URL 获取图片。直接使用 `pixiv.re` 反代构造 URL，**无需调用 Pixiv API，无需代理**。
-
-多页作品通过 `page_count` 参数指定页数。
+LLM 调用此工具后，插件自动从 `pixiv.re` 下载图片并直接发送给用户，**无需 LLM 再调用 `send_message_to_user`**。
 
 ### 2. `get_booru_image` LLM 工具
 
-LLM 可从 danbooru 获取图片直链。需要在插件配置中填写 `danbooru_login` 和 `danbooru_api_key`。
+从 danbooru 获取并直接发送图片。需要在插件配置中填写 `danbooru_login` 和 `danbooru_api_key`。
 
-### 3. i.pximg.net 反代修复（兜底）
+### 3. 兜底 patch
 
-NapCat/LLOB 发送 Pixiv 图片时，协议端自行下载 `i.pximg.net` 的图片，因缺少 `Referer` 头被 403。
+拦截消息链中的 Pixiv 相关 URL，由 AstrBot 下载转 base64 后替换：
 
-插件在底层 patch `send_by_session`，在消息发出前自动处理：
+- `pixiv.net/artworks/xxx` → 用 `pixiv.re/{id}-1.png` 下载
+- `i.pximg.net/...` → 先尝试 `i.pixiv.re` 反代，404 时提取 artwork ID 用 `pixiv.re/{id}-1.png` 回退
 
-- `pixiv.net/artworks/xxx` 作品页 URL → 替换为 `pixiv.re` 反代 URL
-- `i.pximg.net` 直链 → 替换为 `i.pixiv.re` 反代
-
-覆盖所有发送路径（handler yield + LLM tool），**即使 LLM 没有调用 `get_pixiv_image` 工具，直接把作品页 URL 发出去也能正常显示**。
+覆盖所有发送路径（handler yield + LLM tool），即使 LLM 不调工具直接发 URL 也能兜住。
 
 ## 安装
 
@@ -52,11 +54,15 @@ Pixiv 功能无需任何配置，开箱即用。
 
 > 从 danbooru post 8988430 发一张图
 
+## 前置条件
+
+AstrBot 容器需要能访问 `pixiv.re`（通过代理或直连）。NapCat 侧无需任何网络配置。
+
 ## 适用平台
 
 - OneBot v11（NapCat、LLOB、Lagrange 等）
 
-其他平台不受反代修复影响，LLM 工具在所有平台可用。
+其他平台不受 patch 影响，LLM 工具在所有平台可用。
 
 ## 依赖
 
