@@ -180,15 +180,27 @@ class PixivPlugin(Star):
         """
         将 pixiv 相关 URL 解析为可下载地址，下载后返回 base64。
         支持：pixiv.net/artworks/xxx、i.pximg.net 直链。
+        对 i.pximg.net 直链：先尝试 i.pixiv.re 反代，失败则提取 artwork ID 用 pixiv.re/{id}-1.png 重试。
         """
         m = _ARTWORK_URL_RE.search(url)
         if m:
             download_url = _pixiv_re_url(m.group(1), 1)
-        elif _PIXIV_IMG_HOST in url:
-            download_url = url.replace(_PIXIV_IMG_HOST, _PIXIV_PROXY_HOST, 1)
-        else:
+            return await self._download_as_base64(download_url)
+
+        if _PIXIV_IMG_HOST in url:
+            proxy_url = url.replace(_PIXIV_IMG_HOST, _PIXIV_PROXY_HOST, 1)
+            b64 = await self._download_as_base64(proxy_url)
+            if b64:
+                return b64
+            # i.pixiv.re 404（日期路径错误），从 URL 提取 artwork ID 用 pixiv.re 重试
+            id_match = re.search(r"/(\d+)_p\d+", url)
+            if id_match:
+                fallback_url = _pixiv_re_url(id_match.group(1), 1)
+                logger.info(f"[pixiv] i.pixiv.re 失败，尝试 pixiv.re 回退: {fallback_url}")
+                return await self._download_as_base64(fallback_url)
             return None
-        return await self._download_as_base64(download_url)
+
+        return None
 
     async def _patch_chain_async(self, chain: list) -> None:
         pending: list[tuple[int, str]] = []
