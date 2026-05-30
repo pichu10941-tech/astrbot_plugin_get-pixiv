@@ -237,11 +237,71 @@ class PixivPlugin(Star):
 
         yield event.image_result(file_path)
 
+    @filter.llm_tool(name="search_booru_image")
+    async def search_booru_image(self, event: AstrMessageEvent, tags: str):
+        """按标签从 danbooru 搜索图片并发送。适用于用户想要某类图片但没有具体 post ID 的场景。插件会自动下载图片并发送，无需再调用 send_message_to_user。
+
+        Args:
+            tags(string): danbooru 搜索标签，空格分隔，如 "1girl blue_eyes" 或 "rating:sensitive 1girl"
+        """
+        import random
+
+        def _sync_search() -> str:
+            page = random.randint(1, 30)
+            resp = cffi_requests.get(
+                "https://danbooru.donmai.us/posts.json",
+                params={"tags": tags, "limit": "1", "page": str(page)},
+                impersonate="chrome",
+                headers={"Accept": "application/json"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                raise ValueError(f"danbooru 搜索返回 HTTP {resp.status_code}")
+            posts = resp.json()
+            if not posts:
+                raise ValueError(f"danbooru 未找到匹配 '{tags}' 的图片")
+            post = posts[0]
+            url = post.get("file_url") or post.get("large_file_url")
+            if not url:
+                raise ValueError(f"danbooru post {post.get('id')} 无可用图片 URL")
+            return url
+
+        try:
+            img_url = await asyncio.to_thread(_sync_search)
+        except Exception as e:
+            logger.warning(f"[booru] danbooru 搜索失败: {e}")
+            yield event.plain_result(f"danbooru 搜索失败: {e}")
+            return
+
+        logger.info(f"[booru] 搜索 '{tags}' 命中，开始下载: {img_url}")
+        file_path = await self._cffi_download_to_file(img_url)
+        if not file_path:
+            yield event.plain_result("下载 danbooru 图片失败")
+            return
+
+        yield event.image_result(file_path)
+
     async def _resolve_and_download(self, url: str) -> Optional[str]:
         """
-        将 pixiv 相关 URL 解析为可下载地址，下载后返回临时文件路径。
-        统一使用 pixiv.re/{id}.png 格式下载，避免 LLM 编造的日期路径导致 404。
+        将 pixiv/danbooru 相关 URL 解析为可下载地址，下载后返回临时文件路径。
+        Pixiv: 统一使用 pixiv.re/{id}.png 格式下载。
+        Danbooru: 使用 curl_cffi 直接下载 CDN 链接。
         """
+        # Danbooru CDN 直链
+        if "cdn.donmai.us/" in url or "danbooru.donmai.us/original" in url:
+            return await self._cffi_download_to_file(url)
+
+        # Danbooru post 页面 URL → 提取 ID 后走 API 获取图片直链
+        danbooru_match = re.search(r"danbooru\.donmai\.us/posts/(\d+)", url)
+        if danbooru_match:
+            post_id = danbooru_match.group(1)
+            try:
+                img_url = await self._fetch_danbooru_url(post_id)
+                return await self._cffi_download_to_file(img_url)
+            except Exception as e:
+                logger.warning(f"[booru] 兜底下载 danbooru {post_id} 失败: {e}")
+                return None
+
         m = _ARTWORK_URL_RE.search(url)
         if m:
             return await self._download_to_file(_pixiv_re_url(m.group(1)))
@@ -255,16 +315,25 @@ class PixivPlugin(Star):
 
         return None
 
+    def _needs_download(self, src: str) -> bool:
+        """判断 URL 是否需要由插件下载后替换为本地文件。"""
+        return bool(
+            _PIXIV_IMG_HOST in src
+            or "pixiv.net/artworks/" in src
+            or "danbooru.donmai.us/" in src
+            or "cdn.donmai.us/" in src
+        )
+
     async def _patch_chain_async(self, chain: list) -> None:
         pending: list[tuple[int, str]] = []
         for i, comp in enumerate(chain):
             if isinstance(comp, Comp.Image):
                 src = comp.file or ""
-                if _PIXIV_IMG_HOST in src or "pixiv.net/artworks/" in src:
+                if self._needs_download(src):
                     pending.append((i, src))
             elif isinstance(comp, Comp.File):
                 src = comp.url or ""
-                if _PIXIV_IMG_HOST in src or "pixiv.net/artworks/" in src:
+                if self._needs_download(src):
                     pending.append((i, src))
 
         if not pending:
