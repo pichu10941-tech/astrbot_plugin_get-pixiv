@@ -118,22 +118,19 @@ class PixivPlugin(Star):
         return url
 
     @filter.llm_tool(name="get_pixiv_image")
-    async def get_pixiv_image(self, event: AstrMessageEvent, artwork_id_or_url: str, page_count: int = 1):
+    async def get_pixiv_image(self, event: AstrMessageEvent, artwork_id_or_url: str):
         """获取 Pixiv 作品的图片 URL，供后续发送给用户。使用 pixiv.re 反代，无需代理即可下载。
 
         Args:
             artwork_id_or_url(string): Pixiv 作品 ID（如 127565524）或作品页 URL（如 https://www.pixiv.net/artworks/127565524）
-            page_count(number): 作品页数，默认为 1。多页作品请指定页数以获取所有页面。
         """
         artwork_id = _extract_artwork_id(artwork_id_or_url)
         if not artwork_id:
             yield event.plain_result(f"无法解析 artwork ID: {artwork_id_or_url}")
             return
-        if page_count < 1:
-            page_count = 1
-        urls = [_pixiv_re_url(artwork_id, p) for p in range(1, page_count + 1)]
-        logger.info(f"[pixiv] 作品 {artwork_id} 生成 {len(urls)} 个 pixiv.re URL")
-        yield event.plain_result("\n".join(urls))
+        url = _pixiv_re_url(artwork_id, 1)
+        logger.info(f"[pixiv] 作品 {artwork_id}: {url}")
+        yield event.plain_result(url)
 
     @filter.llm_tool(name="get_booru_image")
     async def get_booru_image(self, event: AstrMessageEvent, post_id_or_url: str):
