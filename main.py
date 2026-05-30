@@ -43,6 +43,7 @@ _PIXIV_AJAX_HEADERS = {
 _ARTWORK_ID_RE = re.compile(r"(?:artworks/|illust_id=)(\d+)|^(\d+)$")
 _ARTWORK_URL_RE = re.compile(r"pixiv\.net/(?:\w+/)?artworks/(\d+)")
 _DANBOORU_POST_RE = re.compile(r"danbooru\.donmai\.us/posts/(\d+)|^(\d+)$")
+_THUMB_DATE_RE = re.compile(r"/img/(\d{4}/\d{2}/\d{2}/\d{2}/\d{2}/\d{2})/(\d+)_p0")
 
 
 def _extract_artwork_id(s: str) -> Optional[str]:
@@ -85,19 +86,52 @@ class PixivPlugin(Star):
         """
         通过 Pixiv Ajax API 获取作品所有分页的原图直链。
         无需登录，但需要 Referer: https://www.pixiv.net/
+        R-18 作品的 /pages 端点返回 404，此时从 /illust 的缩略图 URL 推导原图路径。
         """
         session = self._get_session()
-        async with session.get(
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        pages_resp = await session.get(
             f"https://www.pixiv.net/ajax/illust/{artwork_id}/pages",
             headers=_PIXIV_AJAX_HEADERS,
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=timeout,
+        )
+        async with pages_resp:
+            pages_data = await pages_resp.json()
+
+        if not pages_data.get("error") and pages_data.get("body"):
+            return [page["urls"]["original"] for page in pages_data["body"]]
+
+        async with session.get(
+            f"https://www.pixiv.net/ajax/illust/{artwork_id}",
+            headers=_PIXIV_AJAX_HEADERS,
+            timeout=timeout,
         ) as resp:
             if resp.status != 200:
                 raise ValueError(f"Pixiv API 返回 HTTP {resp.status}")
-            data = await resp.json()
-        if data.get("error"):
-            raise ValueError(f"Pixiv API 错误: {data.get('message')}")
-        return [page["urls"]["original"] for page in data["body"]]
+            illust_data = await resp.json()
+
+        if illust_data.get("error"):
+            raise ValueError(f"Pixiv API 错误: {illust_data.get('message')}")
+
+        body = illust_data.get("body", {})
+        page_count = body.get("pageCount", 1)
+
+        thumb_url = (body.get("urls") or {}).get("thumb") or ""
+        if not thumb_url:
+            user_illusts = body.get("userIllusts") or {}
+            entry = user_illusts.get(artwork_id) or {}
+            thumb_url = entry.get("url", "")
+
+        m = _THUMB_DATE_RE.search(thumb_url)
+        if not m:
+            raise ValueError(f"无法从缩略图 URL 推导原图路径（可能需要登录）: {thumb_url}")
+
+        date_path = m.group(1)
+        return [
+            f"https://i.pximg.net/img-original/img/{date_path}/{artwork_id}_p{i}.png"
+            for i in range(page_count)
+        ]
 
     async def _fetch_danbooru_url(self, post_id: str) -> str:
         """
